@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Write;
 
+mod evaluating;
 mod lexing;
 mod parsing;
 
@@ -22,9 +23,10 @@ fn main() {
         }
 
         if buffer.is_empty() {
-            return println!("^D");
+            return;
         }
 
-        lexing::TokenStream::new(&buffer);
+        let ast = parsing::ParsingContext::new(&buffer).parse().unwrap();
+        println!("{}", evaluating::evaluate(ast));
     }
 }

@@ -1,5 +1,12 @@
+use std::iter;
+
 use super::lexing;
 
+pub struct AST {
+    pub expressions: Vec<Expression>,
+}
+
+#[derive(Debug)]
 pub enum Error {
     IncorrectToken {
         actual: lexing::Token,
@@ -8,23 +15,135 @@ pub enum Error {
 
     TokenStreamExhausted,
 
+    UndefinedLabel {
+        token: lexing::Token,
+    },
+
     UnexpectedToken {
         token: lexing::Token,
     },
 }
 
 pub enum Expression {
-    Call {
-        function: Box<Expression>,
-        argument: Box<Expression>,
-    },
+    Abstraction { expression: usize },
 
-    Definition {
-        body: Box<Expression>,
-        parameter: usize,
-    },
+    Application { function: usize, argument: usize },
 
-    Variable {
-        reference: usize,
-    },
+    Variable { index: usize },
+}
+
+pub struct ParsingContext<'s> {
+    token_stream: iter::Peekable<lexing::TokenStream<'s>>,
+    variables: ahash::AHashMap<usize, usize>,
+    expressions: Vec<Expression>,
+    scope_depth: usize,
+}
+
+impl<'s> ParsingContext<'s> {
+    fn add_expression(&mut self, expression: Expression) -> usize {
+        let index = self.expressions.len();
+        self.expressions.push(expression);
+
+        index
+    }
+
+    fn expect(&mut self, expected: lexing::TokenKind) -> Result<lexing::Token, Error> {
+        match self.token_stream.next() {
+            None => Err(Error::TokenStreamExhausted),
+            Some(token) if token.kind == expected => Ok(token),
+            Some(token) => Err(Error::IncorrectToken {
+                actual: token,
+                expected,
+            }),
+        }
+    }
+
+    pub fn new(source: &'s str) -> Self {
+        Self {
+            expressions: Vec::with_capacity(16),
+            variables: ahash::AHashMap::with_capacity(16),
+            scope_depth: 0,
+            token_stream: lexing::TokenStream::new(source).peekable(),
+        }
+    }
+
+    pub fn parse(mut self) -> Result<AST, Error> {
+        let root = self.parse_expression()?;
+        self.add_expression(root);
+
+        Ok(AST {
+            expressions: self.expressions,
+        })
+    }
+
+    fn parse_expression(&mut self) -> Result<Expression, Error> {
+        let mut expression = self.parse_subexpression()?;
+
+        while let Some(token) = self.token_stream.peek()
+            && token.kind != lexing::TokenKind::RightParenthesis
+        {
+            let function = self.add_expression(expression);
+            let argument = self.parse_subexpression()?;
+            let argument = self.add_expression(argument);
+
+            expression = Expression::Application { function, argument };
+        }
+
+        Ok(expression)
+    }
+
+    fn parse_subexpression(&mut self) -> Result<Expression, Error> {
+        match self.token_stream.next() {
+            Some(lexing::Token {
+                kind: lexing::TokenKind::Backslash,
+                ..
+            }) => {
+                let intern = self.expect(lexing::TokenKind::Label)?.intern.unwrap();
+
+                self.expect(lexing::TokenKind::FullStop)?;
+
+                let previous_reference = self.variables.insert(intern, self.scope_depth);
+                self.scope_depth += 1;
+
+                let expression = self.parse_expression()?;
+                let expression = self.add_expression(expression);
+
+                self.scope_depth -= 1;
+                if let Some(reference) = previous_reference {
+                    self.variables.insert(intern, reference);
+                } else {
+                    self.variables.remove(&intern);
+                }
+
+                Ok(Expression::Abstraction { expression })
+            }
+
+            Some(
+                token @ lexing::Token {
+                    kind: lexing::TokenKind::Label,
+                    intern: Some(intern),
+                    ..
+                },
+            ) => {
+                let Some(depth) = self.variables.get(&intern).copied() else {
+                    return Err(Error::UndefinedLabel { token });
+                };
+
+                Ok(Expression::Variable { index: self.scope_depth - depth })
+            }
+
+            Some(lexing::Token {
+                kind: lexing::TokenKind::LeftParenthesis,
+                ..
+            }) => {
+                let expression = self.parse_expression();
+
+                self.expect(lexing::TokenKind::RightParenthesis)
+                    .and(expression)
+            }
+
+            Some(token) => Err(Error::UnexpectedToken { token }),
+            None => Err(Error::TokenStreamExhausted),
+        }
+    }
 }
