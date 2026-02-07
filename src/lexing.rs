@@ -2,15 +2,12 @@ use std::iter;
 use std::ops;
 use std::str;
 
-use std::fmt::Display;
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Position {
     pub column: usize,
     pub line: usize,
 }
 
-#[derive(Debug)]
 pub struct Token {
     pub span: ops::Range<usize>,
     pub intern: Option<usize>,
@@ -18,7 +15,7 @@ pub struct Token {
     pub kind: TokenKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum TokenKind {
     Backslash,
     FullStop,
@@ -32,30 +29,18 @@ pub struct TokenStream<'s> {
     characters: iter::Peekable<str::CharIndices<'s>>,
     interns: ahash::AHashMap<&'s str, usize>,
     original: &'s str,
-    position: Position,
-}
-
-impl Display for TokenKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Backslash => "'\\'",
-                Self::FullStop => "'.'",
-                Self::IllegalCharacter => "illegal character",
-                Self::Label => "{label}",
-                Self::LeftParenthesis => "'('",
-                Self::RightParenthesis => "')'",
-            }
-        )
-    }
+    peeked: Option<Token>,
+    pub position: Position,
 }
 
 impl Iterator for TokenStream<'_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.peeked.is_some() {
+            return self.peeked.take();
+        }
+
         while let Some((_, character)) = self.characters.peek().copied()
             && character.is_whitespace()
         {
@@ -120,7 +105,17 @@ impl<'s> TokenStream<'s> {
             characters: source.char_indices().peekable(),
             interns: ahash::AHashMap::with_capacity(16),
             original: source,
+            peeked: None,
             position: Position { column: 1, line: 1 },
         }
+    }
+
+    pub fn peek(&mut self) -> Option<&Token> {
+        if self.peeked.is_none() {
+            let peeked = self.next()?;
+            let _ = self.peeked.insert(peeked);
+        }
+
+        self.peeked.as_ref()
     }
 }

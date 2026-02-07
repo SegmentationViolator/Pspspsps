@@ -25,8 +25,5 @@ fn main() {
         if buffer.is_empty() {
             return;
         }
-
-        let ast = parsing::ParsingContext::new(&buffer).parse().unwrap();
-        println!("{}", evaluating::evaluate(ast));
     }
 }
