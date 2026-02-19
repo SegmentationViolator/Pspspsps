@@ -1,7 +1,6 @@
 use std::io;
 use std::io::Write;
 
-mod evaluating;
 mod lexing;
 mod parsing;
 

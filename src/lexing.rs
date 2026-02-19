@@ -2,20 +2,25 @@ use std::iter;
 use std::ops;
 use std::str;
 
-#[derive(Clone, Copy)]
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Intern(usize);
+
+#[derive(Clone, Copy, Debug)]
 pub struct Position {
     pub column: usize,
     pub line: usize,
 }
 
+#[derive(Debug)]
 pub struct Token {
     pub span: ops::Range<usize>,
-    pub intern: Option<usize>,
     pub position: Position,
+    pub intern: Option<Intern>,
     pub kind: TokenKind,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TokenKind {
     Backslash,
     FullStop,
@@ -26,10 +31,10 @@ pub enum TokenKind {
 }
 
 pub struct TokenStream<'s> {
-    characters: iter::Peekable<str::CharIndices<'s>>,
-    interns: ahash::AHashMap<&'s str, usize>,
-    original: &'s str,
+    symbols: ahash::AHashMap<&'s str, Intern>,
     peeked: Option<Token>,
+    characters: iter::Peekable<str::CharIndices<'s>>,
+    source: &'s str,
     pub position: Position,
 }
 
@@ -74,9 +79,9 @@ impl Iterator for TokenStream<'_> {
                     self.position.column += 1;
                 }
 
-                let label = &self.original[start..end];
-                let intern = self.interns.len();
-                let intern = *self.interns.entry(label).or_insert(intern);
+                let label = &self.source[start..end];
+                let intern = Intern(self.symbols.len());
+                let intern = *self.symbols.entry(label).or_insert(intern);
 
                 (end, TokenKind::Label, Some(intern))
             }
@@ -103,8 +108,8 @@ impl<'s> TokenStream<'s> {
     pub fn new(source: &'s str) -> Self {
         Self {
             characters: source.char_indices().peekable(),
-            interns: ahash::AHashMap::with_capacity(16),
-            original: source,
+            symbols: ahash::AHashMap::with_capacity(16),
+            source,
             peeked: None,
             position: Position { column: 1, line: 1 },
         }
