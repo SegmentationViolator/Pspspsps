@@ -1,27 +1,85 @@
 {
+    description = "A lambda calculus evaluator";
+
     inputs = {
-        flake-utils.url = "github:numtide/flake-utils";
-        naersk = {
-            url = "github:nix-community/naersk";
-            inputs.nixpkgs.follows = "nixpkgs";
-        };
         nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+        crane.url = "github:ipetkov/crane";
+        flake-utils.url = "github:numtide/flake-utils";
     };
 
-    outputs = { nixpkgs, flake-utils, naersk, ... }:
-        flake-utils.lib.eachDefaultSystem (system:
+    outputs =
+        {
+            self,
+            nixpkgs,
+            crane,
+            flake-utils,
+            ...
+        }:
+        flake-utils.lib.eachDefaultSystem (
+            system:
             let
                 pkgs = import nixpkgs { inherit system; };
-                naersk' = pkgs.callPackage naersk { };
-            in
-            {
-                packages.default = naersk'.buildPackage {
-                    src = ./.;
+                mingwPkgs = import nixpkgs {
+                    inherit system;
+                    crossSystem = {
+                        config = "x86_64-w64-mingw32";
+                    };
                 };
 
-                devShell = pkgs.mkShell {
-                    buildInputs = with pkgs; [ cargo rustc rustfmt rustPackages.clippy ];
-                    RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+                craneLib = crane.mkLib pkgs;
+                mingwCraneLib = crane.mkLib mingwPkgs;
+
+                src = craneLib.cleanCargoSource ./.;
+
+                commonArgs = {
+                    inherit src;
+                    strictDeps = true;
+                };
+
+                cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+                mingwCargoArtifacts = mingwCraneLib.buildDepsOnly (
+                    commonArgs
+                    // {
+                        CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+                    }
+                );
+
+                default = craneLib.buildPackage (
+                    commonArgs
+                    // {
+                        inherit cargoArtifacts;
+                    }
+                );
+
+                windows = mingwCraneLib.buildPackage (
+                    commonArgs
+                    // {
+                        cargoArtifacts = mingwCargoArtifacts;
+                        CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
+                        CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER =
+                            "${mingwPkgs.stdenv.cc.targetPrefix}gcc";
+                    }
+                );
+            in
+            {
+                checks = {
+                    crate-clippy = craneLib.cargoClippy (
+                        commonArgs
+                        // {
+                            inherit cargoArtifacts;
+                        }
+                    );
+                };
+
+                packages = {
+                    inherit default;
+                    inherit windows;
+                };
+
+                devShells.default = craneLib.devShell {
+                    checks = self.checks.${system};
+
+                    packages = [];
                 };
             }
         );
