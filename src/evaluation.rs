@@ -1,12 +1,12 @@
 use super::parsing;
 
 pub struct EvaluationContext<'g> {
-    expression_graph: &'g mut parsing::ExpressionGraph,
+    expression_graph: &'g mut parsing::CompleteExpressionGraph,
     stack: Vec<parsing::ExpressionId>,
 }
 
 impl<'g> EvaluationContext<'g> {
-    pub fn new(expression_graph: &'g mut parsing::ExpressionGraph) -> Self {
+    pub fn new(expression_graph: &'g mut parsing::CompleteExpressionGraph) -> Self {
         Self {
             expression_graph,
             stack: Vec::with_capacity(16),

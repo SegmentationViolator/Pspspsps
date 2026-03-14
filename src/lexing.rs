@@ -1,33 +1,9 @@
-use std::fmt;
 use std::iter;
-use std::ops;
 use std::str;
 
-pub type Intern = usize;
+mod token;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Position {
-    pub column: usize,
-    pub line: usize,
-}
-
-#[derive(Debug)]
-pub struct Token {
-    pub span: ops::Range<usize>,
-    pub position: Position,
-    pub intern: Option<Intern>,
-    pub kind: TokenKind,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TokenKind {
-    Backslash,
-    FullStop,
-    IllegalCharacter,
-    Label,
-    LeftParenthesis,
-    RightParenthesis,
-}
+pub use token::*;
 
 pub struct TokenStream<'s> {
     symbols: ahash::AHashMap<&'s str, Intern>,
@@ -35,19 +11,6 @@ pub struct TokenStream<'s> {
     characters: iter::Peekable<str::CharIndices<'s>>,
     source: &'s str,
     pub position: Position,
-}
-
-impl fmt::Display for TokenKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TokenKind::Backslash => write!(f, "\\"),
-            TokenKind::FullStop => write!(f, "."),
-            TokenKind::IllegalCharacter => write!(f, "illegal character"),
-            TokenKind::Label => write!(f, "label"),
-            TokenKind::LeftParenthesis => write!(f, "("),
-            TokenKind::RightParenthesis => write!(f, ")"),
-        }
-    }
 }
 
 impl Iterator for TokenStream<'_> {
@@ -113,19 +76,6 @@ impl Iterator for TokenStream<'_> {
             kind,
             intern,
         })
-    }
-}
-
-impl Token {
-    pub fn display(&self, source: &str) -> String {
-        match self.kind {
-            literal @ (TokenKind::Backslash
-            | TokenKind::FullStop
-            | TokenKind::LeftParenthesis
-            | TokenKind::RightParenthesis) => literal.to_string(),
-
-            non_literal @ (TokenKind::IllegalCharacter | TokenKind::Label) => format!("{} {}", non_literal, &source[self.span.clone()]),
-        }
     }
 }
 

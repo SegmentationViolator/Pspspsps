@@ -9,12 +9,12 @@ const PROMPT: &[u8] = "\u{03c8}\u{03c8}\u{03c8}\u{03c8}> ".as_bytes();
 
 fn display_expression(
     source: &str,
-    expression_graph: &parsing::ExpressionGraph,
+    expression_graph: &parsing::CompleteExpressionGraph,
     expression: parsing::ExpressionId,
 ) -> String {
     fn inner_display_expression(
         source: &str,
-        expression_graph: &parsing::ExpressionGraph,
+        expression_graph: &parsing::CompleteExpressionGraph,
         expression: parsing::ExpressionId,
         visiting: &mut collections::HashSet<parsing::ExpressionId>,
     ) -> String {
