@@ -20,7 +20,7 @@
                 };
 
                 devShell = pkgs.mkShell {
-                    buildInputs = with pkgs; [ cargo jq perf rustc rustfmt rustPackages.clippy ];
+                    buildInputs = with pkgs; [ cargo rustc rustfmt rustPackages.clippy ];
                     RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
                 };
             }

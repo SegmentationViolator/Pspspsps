@@ -1,4 +1,4 @@
-use std::{alloc, mem, ptr};
+use std::ops;
 
 use super::lexing;
 
@@ -13,16 +13,12 @@ pub enum Error {
         position: lexing::Position,
     },
 
-    UndefinedLabel {
-        position: lexing::Position,
-    },
-
     UnexpectedToken {
         token: lexing::Token,
     },
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Expression {
     Abstraction {
         body: ExpressionId,
@@ -33,86 +29,129 @@ pub enum Expression {
         argument: ExpressionId,
     },
 
+    Indirection {
+        target: ExpressionId,
+    },
+
+    Symbol {
+        span: ops::Range<usize>,
+    },
+
     Variable {
         index: usize,
     },
 }
 
-pub struct ExpressionGraph {
-    ptr: *const Expression,
-    len: usize, 
-    cap: usize,
-}
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct ExpressionGraph(Vec<Expression>);
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub struct ExpressionId(pub usize);
+#[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Eq)]
+pub struct ExpressionId(usize);
 
 pub struct ParsingContext<'s> {
     abstractions: ahash::AHashMap<ExpressionId, ExpressionId>,
     applications: ahash::AHashMap<(ExpressionId, ExpressionId), ExpressionId>,
     depths: ahash::AHashMap<lexing::Intern, usize>,
     token_stream: lexing::TokenStream<'s>,
-    expressions: Vec<Expression>,
-    variables: Vec<Option<ExpressionId>>,
+    expressions: ExpressionGraph,
     current_depth: usize,
     unmatched_tokens: usize,
 }
 
-impl From<Vec<Expression>> for ExpressionGraph {
-    fn from(value: Vec<Expression>) -> Self {
-        let cap = value.capacity();
-        let len = value.len();
-        let ptr = value.as_ptr();
-        mem::forget(value);
+impl ops::Index<ExpressionId> for ExpressionGraph {
+    type Output = Expression;
 
-        ExpressionGraph {
-            ptr,
-            len,
-            cap,
-        }
+    fn index(&self, index: ExpressionId) -> &Self::Output {
+        self.0.index(index.0)
     }
 }
 
-impl Drop for ExpressionGraph {
-    fn drop(&mut self) {
-        if self.cap == 0 {
-            return;
-        }
+impl ops::IndexMut<ExpressionId> for ExpressionGraph {
+    fn index_mut(&mut self, index: ExpressionId) -> &mut Self::Output {
+        self.0.index_mut(index.0)
+    }
+}
 
-        unsafe { alloc::dealloc(self.ptr as *mut u8, alloc::Layout::array::<Expression>(self.cap).unwrap_unchecked()); }
+impl Error {
+    pub fn display(self, source: &str) -> String {
+        match self {
+            Error::IncorrectToken { actual, expected } => {
+                format!(
+                    "at line {}, column {}: expected {} found {}\n",
+                    actual.position.line,
+                    actual.position.column,
+                    expected,
+                    actual.display(source)
+                )
+            }
+            Error::TokenStreamExhausted { position } => {
+                format!(
+                    "at line {}, column {}: unexpected end-of-stream\n",
+                    position.line, position.column
+                )
+            }
+            Error::UnexpectedToken { token } => {
+                format!(
+                    "at line {}, column {}: unexpected {}\n",
+                    token.position.line,
+                    token.position.column,
+                    token.display(source)
+                )
+            }
+        }
     }
 }
 
 impl ExpressionGraph {
-    pub fn get<'g>(&self, expression: ExpressionId) -> Option<&'g Expression> {
-        if expression.0 >= self.len {
-            return None;
-        }
-
-        Some(unsafe { &*self.ptr.add(expression.0) })
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-}
-
-impl<'s> ParsingContext<'s> {
-    fn add_expression(&mut self, expression: Expression) -> ExpressionId {
-        let index = self.expressions.len();
-        self.expressions.push(expression);
+    pub fn add(&mut self, expression: Expression) -> ExpressionId {
+        let index = self.0.len();
+        self.0.push(expression);
 
         ExpressionId(index)
     }
 
+    pub fn clone_expression(&mut self, expression: ExpressionId) -> ExpressionId {
+        match self[expression] {
+            Expression::Abstraction { body } => {
+                let body = self.clone_expression(body);
+                self.add(Expression::Abstraction { body })
+            }
+            Expression::Application { function, argument } => {
+                let function = self.clone_expression(function);
+                let argument = self.clone_expression(argument);
+                self.add(Expression::Application { function, argument })
+            }
+            Expression::Indirection { .. } => expression,
+            Expression::Symbol { ref span } => self.add(Expression::Symbol { span: span.clone() }),
+            Expression::Variable { index } => self.add(Expression::Variable { index }),
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub fn root(&self) -> ExpressionId {
+        ExpressionId(self.len() - 1)
+    }
+}
+
+impl ExpressionId {
+    pub const NULL: Self = Self(usize::MAX);
+}
+
+impl<'s> ParsingContext<'s> {
     fn expect(&mut self, expected: lexing::TokenKind) -> Result<lexing::Token, Error> {
         match self.token_stream.next() {
+            Some(token) if token.kind == expected => Ok(token),
+
             None => Err(Error::TokenStreamExhausted {
                 position: self.token_stream.position,
             }),
-            Some(token) if token.kind == expected => Ok(token),
             Some(token) => Err(Error::IncorrectToken {
                 actual: token,
                 expected,
@@ -126,33 +165,34 @@ impl<'s> ParsingContext<'s> {
             applications: ahash::AHashMap::with_capacity(16),
             current_depth: 0,
             depths: ahash::AHashMap::with_capacity(16),
-            expressions: Vec::with_capacity(16),
+            expressions: ExpressionGraph(Vec::with_capacity(16)),
             token_stream: lexing::TokenStream::new(source),
             unmatched_tokens: 0,
-            variables: Vec::with_capacity(16),
         }
     }
 
     pub fn parse(mut self) -> Result<ExpressionGraph, Error> {
-        self.parse_application()?;
+        self.parse_expression()?;
 
-        Ok(self.expressions.into())
+        Ok(self.expressions)
     }
 
-    fn parse_application(&mut self) -> Result<ExpressionId, Error> {
-        let mut function = self.parse_other()?;
+    fn parse_expression(&mut self) -> Result<ExpressionId, Error> {
+        let mut function = self.parse_subexpression()?;
 
         while let Some(token) = self.token_stream.peek()
             && (self.unmatched_tokens == 0 || token.kind != lexing::TokenKind::RightParenthesis)
         {
-            let argument = self.parse_other()?;
+            let argument = self.parse_subexpression()?;
 
             if let Some(expression) = self.applications.get(&(function, argument)).copied() {
                 function = expression;
                 continue;
             }
 
-            let expression = self.add_expression(Expression::Application { function, argument });
+            let expression = self
+                .expressions
+                .add(Expression::Application { function, argument });
             self.applications.insert((function, argument), expression);
 
             function = expression;
@@ -161,7 +201,7 @@ impl<'s> ParsingContext<'s> {
         Ok(function)
     }
 
-    fn parse_other(&mut self) -> Result<ExpressionId, Error> {
+    fn parse_subexpression(&mut self) -> Result<ExpressionId, Error> {
         match self.token_stream.next() {
             Some(lexing::Token {
                 kind: lexing::TokenKind::Backslash,
@@ -171,14 +211,14 @@ impl<'s> ParsingContext<'s> {
 
                 self.expect(lexing::TokenKind::FullStop)?;
 
-                let index = self.depths.insert(intern, self.current_depth);
+                let previous_depth = self.depths.insert(intern, self.current_depth);
                 self.current_depth += 1;
 
-                let body = self.parse_application()?;
+                let body = self.parse_expression()?;
 
                 self.current_depth -= 1;
-                if let Some(index) = index {
-                    self.depths.insert(intern, index);
+                if let Some(depth) = previous_depth {
+                    self.depths.insert(intern, depth);
                 } else {
                     self.depths.remove(&intern);
                 }
@@ -187,39 +227,25 @@ impl<'s> ParsingContext<'s> {
                     return Ok(expression);
                 }
 
-                let expression = self.add_expression(Expression::Abstraction { body });
+                let expression = self.expressions.add(Expression::Abstraction { body });
                 self.abstractions.insert(body, expression);
 
                 Ok(expression)
             }
 
-            Some(
-                token @ lexing::Token {
-                    kind: lexing::TokenKind::Label,
-                    intern: Some(intern),
-                    ..
-                },
-            ) => {
+            Some(lexing::Token {
+                kind: lexing::TokenKind::Label,
+                intern: Some(intern),
+                span,
+                ..
+            }) => {
                 let Some(depth) = self.depths.get(&intern).copied() else {
-                    return Err(Error::UndefinedLabel {
-                        position: token.position,
-                    });
+                    return Ok(self.expressions.add(Expression::Symbol { span }));
                 };
 
-                let index = self.current_depth - depth;
-
-                if let Some(expression) = self.variables.get(index-1).copied().flatten() {
-                    return Ok(expression);
-                }
-
-                let expression = self.add_expression(Expression::Variable { index });
-
-                if index >= self.variables.len() {
-                    self.variables.resize(index, None);
-                }
-                self.variables[index-1] = Some(expression);
-
-                Ok(expression)
+                Ok(self.expressions.add(Expression::Variable {
+                    index: self.current_depth - depth,
+                }))
             }
 
             Some(lexing::Token {
@@ -227,7 +253,7 @@ impl<'s> ParsingContext<'s> {
                 ..
             }) => {
                 self.unmatched_tokens += 1;
-                let expression = self.parse_application()?;
+                let expression = self.parse_expression()?;
                 self.expect(lexing::TokenKind::RightParenthesis)?;
                 self.unmatched_tokens -= 1;
 

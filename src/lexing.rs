@@ -1,10 +1,9 @@
+use std::fmt;
 use std::iter;
 use std::ops;
 use std::str;
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Intern(usize);
+pub type Intern = usize;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Position {
@@ -20,7 +19,7 @@ pub struct Token {
     pub kind: TokenKind,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     Backslash,
     FullStop,
@@ -36,6 +35,19 @@ pub struct TokenStream<'s> {
     characters: iter::Peekable<str::CharIndices<'s>>,
     source: &'s str,
     pub position: Position,
+}
+
+impl fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenKind::Backslash => write!(f, "\\"),
+            TokenKind::FullStop => write!(f, "."),
+            TokenKind::IllegalCharacter => write!(f, "illegal character"),
+            TokenKind::Label => write!(f, "label"),
+            TokenKind::LeftParenthesis => write!(f, "("),
+            TokenKind::RightParenthesis => write!(f, ")"),
+        }
+    }
 }
 
 impl Iterator for TokenStream<'_> {
@@ -80,7 +92,7 @@ impl Iterator for TokenStream<'_> {
                 }
 
                 let label = &self.source[start..end];
-                let intern = Intern(self.symbols.len());
+                let intern = self.symbols.len();
                 let intern = *self.symbols.entry(label).or_insert(intern);
 
                 (end, TokenKind::Label, Some(intern))
@@ -101,6 +113,19 @@ impl Iterator for TokenStream<'_> {
             kind,
             intern,
         })
+    }
+}
+
+impl Token {
+    pub fn display(&self, source: &str) -> String {
+        match self.kind {
+            literal @ (TokenKind::Backslash
+            | TokenKind::FullStop
+            | TokenKind::LeftParenthesis
+            | TokenKind::RightParenthesis) => literal.to_string(),
+
+            non_literal @ (TokenKind::IllegalCharacter | TokenKind::Label) => format!("{} {}", non_literal, &source[self.span.clone()]),
+        }
     }
 }
 
